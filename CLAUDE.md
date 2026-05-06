@@ -13,21 +13,22 @@ MBML---2026/
 ├── course_content/         # lectures, solutions, exercise notebooks
 └── data/                   # local only, not committed
     ├── songs_clean.csv     # produced by phase0; one row per song, 6 scaled features
-    ├── listens_clean.csv   # produced by phase0; (user, song, play_count, listened)
-    ├── lastfm1k/           # raw Last.fm 1K TSV (~1.3 GB)
-    └── msd/MillionSongSubset/  # raw MSD HDF5 tree (~2.6 GB)
+    └── listens_clean.csv   # produced by phase0; (user, song, play_count, listened)
 ```
-External raw data lives at `/Users/magle/Desktop/Repos/MillionSongSubset` and `/Users/magle/Desktop/Repos/lastfm-dataset-1K`.
+External raw data (sibling of repo clone):
+- Last.fm 1K: `../lastfm-dataset-1K/`
+- MSD summary: `../msd_summary_file.h5` (single HDF5, full 1M-song MSD)
 
 ## Data
 | Dataset | Content | Size | Join key |
 |---|---|---|---|
 | Last.fm 1K | ~19M scrobbles, ~1000 users | 1.3 GB TSV | `(artist_norm, track_norm)` |
-| MSD 10K subset | 10k HDF5 files, 6 Echo Nest features | 2.6 GB | same |
-| songs_clean.csv | matched corpus, MinMax-scaled features | ~1k–3k rows | — |
+| MSD summary file | 1M songs, single HDF5, vectorised load | ~300 MB | same |
+| songs_clean.csv | matched corpus, MinMax-scaled features | TBD rows | — |
 | listens_clean.csv | pos+neg listen events | — | — |
 
-Features: `loudness, tempo, energy, danceability, mode, time_signature` (all scaled to [0,1]).
+Features: `loudness, tempo, key, mode, time_signature, duration` (all scaled to [0,1]).
+Note: `energy` and `danceability` are all-zero in the summary file (only in per-track HDF5s) — replaced by `key` (chromatic 0–11) and `duration` (seconds).
 
 ## PGM (short form)
 ```
@@ -95,7 +96,7 @@ plt.rcParams['figure.figsize'] = (12, 8)
 
 ## Key decisions (non-obvious — do not re-litigate)
 - **Spotify deprecated** `/audio-features` on 27 Nov 2024 → switched to MSD + Last.fm.
-- **6 features only** — other MSD fields (hotttnesss, segment pitches) add noise at this corpus size.
+- **6 features only** — `loudness, tempo, key, mode, time_signature, duration`. `energy`/`danceability` are all-zero in the summary file; `key` and `duration` are good substitutes. `hotttnesss` and segment pitches add noise.
 - **5:1 negative sampling** — standard for implicit-feedback Bernoulli likelihoods.
 - **Active-user filter ≥5** — below 5, θ_u posterior is dominated by prior.
 - **K=6 moods** — sweep {4,6,8} in Phase 1, pick most interpretable.

@@ -1,0 +1,66 @@
+PROJECT RESPONSIBILITIES
+Latent Mood & User-Taste Modelling — DTU 42186, Spring 2026
+Deadline: 15 May 2026
+================================================================
+
+TEAM
+  Elmo
+  Anton
+  Magle
+  Brams
+
+================================================================
+
+PHASE OWNERSHIP
+(Owner = leads implementation and is responsible for the gate passing)
+
+  Phase 0 — Data pipeline          Magle
+    phase0_data.ipynb — loads MSD summary + Last.fm, joins,
+    normalises, saves songs_clean.csv and listens_clean.csv.
+    STATUS: done
+
+  Phase 1 — Baseline GMM (SVI)     Anton
+    mood_model.ipynb — Pyro Bayesian GMM over audio features,
+    SVI with TraceEnum_ELBO, ELBO convergence plot, mood interpretation.
+
+  Phase 2 — NUTS comparison         Elmo
+    Same model re-run with HMC/NUTS, R-hat diagnostics,
+    trace plots, side-by-side SVI vs NUTS posterior comparison.
+
+  Phase 3 — User-taste extension    Brams
+    Add user plate (Dirichlet theta_u) and listen-event plate
+    to mood_model.ipynb. Posterior taste profiles for example users.
+
+  Phase 4 — Posterior predictive    Magle
+    Predictive checks: feature histograms, listen-probability
+    density, calibration plot.
+
+  Phase 5 — IEEE paper              ALL (see below)
+
+  Phase 6 — Notebook polish         ALL (see below)
+
+================================================================
+
+PAPER SPLIT (Phase 5)
+IEEE 6-page double-column LaTeX
+
+  Section 1 — Introduction          Elmo
+  Section 2 — Model (PGM, math)     Anton
+  Section 3 — Inference (SVI/MCMC)  Anton
+  Section 4 — Data                  Magle
+  Section 5 — Results               Brams
+  Section 6 — Discussion            Brams
+  Final proof-read & formatting     Elmo
+
+================================================================
+
+SHARED RESPONSIBILITIES
+
+  - All members review each other's phase output before the gate
+    is marked as passed.
+  - Notebook polish (Phase 6): each person cleans up the cells
+    they originally wrote.
+  - All members must be able to explain any part of the model
+    at the oral exam.
+
+================================================================

@@ -8,7 +8,7 @@ A complete, self-contained roadmap for the MBML group project. Written so a fres
 
 We are building a **Bayesian probabilistic model of music** for the DTU course *Model-Based Machine Learning (42186), Spring 2026*. The model has two parts that are trained jointly:
 
-1. A **Bayesian Gaussian mixture** over song audio features. Each component is a "mood" — a characteristic combination of `loudness, tempo, energy, danceability, mode, time_signature`. The model recovers $K$ mood clusters from songs alone.
+1. A **Bayesian Gaussian mixture** over song audio features. Each component is a "mood" — a characteristic combination of `loudness, tempo, key, mode, time_signature, duration`. The model recovers $K$ mood clusters from songs alone.
 2. A **per-user Dirichlet taste profile** over those moods, fitted to real listening histories. The user's preferences shape which songs they engage with via a Bernoulli listen-event likelihood.
 
 The deliverables are a fully-explained Jupyter notebook plus a 6-page IEEE double-column paper, due **15 May 2026**.
@@ -20,9 +20,9 @@ We originally planned to use the Spotify API (`/audio-features`), but **Spotify 
 | Dataset | Provides | Size | Source |
 |---|---|---|---|
 | **Last.fm 1K** | Real listening histories for ~1,000 users (user, timestamp, artist, track) | 1.3 GB extracted | http://ocelma.net/MusicRecommendationDataset/lastfm-1K.html |
-| **MSD 10K subset** | Pre-computed Echo Nest audio features for 10,000 songs in HDF5 | 2.6 GB extracted | http://millionsongdataset.com/pages/getting-dataset/ |
+| **MSD summary file** | Pre-computed Echo Nest audio features for all 1,000,000 MSD songs, single HDF5 | ~300 MB | http://millionsongdataset.com/pages/getting-dataset/ |
 
-They join on a normalised `(artist_name, track_title)` key. Expect the matched corpus to be ~1,000–3,000 songs.
+They join on a normalised `(artist_name, track_title)` key. Measured match rate: **45.6% of scrobbles (~8.7M / 19M rows)** after aggressive normalisation (strip live/remaster/version suffixes before lowercasing). Artist coverage is 81% — the gap is MSD missing specific hit tracks, not artists. Acceptable; noted as catalog-bias attrition in the paper. Note: `energy` and `danceability` are not stored in the summary file (all-zero); we use `key` and `duration` instead.
 
 ---
 
@@ -189,8 +189,8 @@ The notebook does, in order:
 
 1. Imports + seed + plot config.
 2. Load Last.fm scrobbles (~19M rows from a 1.3 GB TSV).
-3. Walk the MSD HDF5 tree, extract 6 features per song from 10,000 `.h5` files (1–3 min on M-series Mac).
-4. Normalise (artist, track) strings on both sides (lowercase, strip, replace `-`/`_` with space).
+3. Load MSD summary HDF5 (`msd_summary_file.h5`) in a single vectorised read — all 1,000,000 songs in seconds.
+4. Normalise (artist, track) strings on both sides: lowercase, strip, replace `-`/`_` with space, **strip live/remaster/version suffixes** (everything after ` - ` or a `(` / `[`).
 5. Inner-join MSD × Last.fm on `(artist_norm, track_norm)`.
 6. Aggregate listen events; filter active users with ≥5 listens.
 7. 5:1 negative sampling per user.
@@ -385,7 +385,7 @@ samples = predictive(X_blank)  # samples["obs"] shape: (S, N, D)
 - [x] Cheat sheet and study notes built for mini-test 2 (in `Mini Tests/`).
 - [x] Spotify-API approach abandoned (deprecated 27 Nov 2024).
 - [x] Last.fm 1K downloaded and extracted to `data/lastfm1k/`.
-- [x] MSD subset downloaded and extracted to `data/msd/MillionSongSubset/` (10,000 `.h5` files).
+- [x] MSD summary file at `../msd_summary_file.h5` (1,000,000 songs, single HDF5).
 - [x] `CONVENTIONS.md` extracted from course exercises.
 - [x] `README.md` written.
 - [x] `phase0_data.ipynb` written (27 cells).
@@ -403,8 +403,8 @@ samples = predictive(X_blank)  # samples["obs"] shape: (S, N, D)
 
 These are the non-obvious choices that future-you will want to be reminded of.
 
-- **Dataset switch.** Original plan was Spotify API. The `/audio-features` endpoint was deprecated 27 November 2024. We switched to Last.fm 1K + MSD 10K subset, joined on normalised `(artist, track)`. Gives ~1k–3k matched songs and ~200–600 active users.
-- **Six features only.** `loudness, tempo, energy, danceability, mode, time_signature`. Other MSD features (`hotttnesss`, segment-level pitches) introduce too much noise for the corpus size and are not informative for mood clustering.
+- **Dataset switch.** Original plan was Spotify API. The `/audio-features` endpoint was deprecated 27 November 2024. We switched to Last.fm 1K + MSD summary file (1M songs), joined on normalised `(artist, track)`. Matched corpus will be much larger than the old 10K subset.
+- **Six features only.** `loudness, tempo, key, mode, time_signature, duration`. `energy` and `danceability` are all-zero in the summary file (only stored in per-track HDF5s). `key` (chromatic 0–11) and `duration` are musically meaningful substitutes. `hotttnesss` and segment pitches add noise.
 - **5:1 negative sampling.** Standard for implicit-feedback Bernoulli likelihoods. Higher ratios (10:1) overweight the negatives; lower (1:1) underweight them.
 - **Active-user filter ≥5 listens.** Below 5, the per-user $\theta_u$ posterior is dominated by the prior — we'd be reporting noise.
 - **K=6 moods.** Corresponds to the typical "mood wheel" granularity in music IR. We can sweep $K \in \{4, 6, 8\}$ in Phase 1 and pick the most interpretable.

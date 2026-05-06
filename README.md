@@ -6,7 +6,7 @@ DTU course **42186 — Model-Based Machine Learning**, Spring 2026. Deadline: **
 
 We build a Bayesian probabilistic model of music that jointly learns:
 
-1. **K mood clusters** (Bayesian Gaussian Mixture) over six Echo Nest audio features from the Million Song Dataset.
+1. **K mood clusters** (Bayesian Gaussian Mixture) over six Echo Nest audio features from the Million Song Dataset summary file (1M songs).
 2. **Per-user taste profiles** (Dirichlet distributions over moods) fitted to real listening histories from Last.fm 1K.
 
 The model answers: *given that user u listened to songs with a certain audio profile, what is their distribution over moods, and what new songs would they likely enjoy?*
@@ -15,10 +15,10 @@ The model answers: *given that user u listened to songs with a certain audio pro
 
 | Dataset | Where | Size |
 |---|---|---|
-| Last.fm 1K scrobbles | `/Users/magle/Desktop/Repos/lastfm-dataset-1K/` | 1.3 GB |
-| MSD 10K subset (HDF5) | `/Users/magle/Desktop/Repos/MillionSongSubset/` | 2.6 GB |
+| Last.fm 1K scrobbles | `../lastfm-dataset-1K/` (sibling of repo) | 1.3 GB |
+| MSD summary file | `../msd_summary_file.h5` (sibling of repo) | ~300 MB |
 
-Both datasets are fully offline. No API keys required. The Spotify `/audio-features` endpoint was deprecated 27 Nov 2024; MSD provides equivalent Echo Nest features.
+Both datasets are fully offline. No API keys required. The Spotify `/audio-features` endpoint was deprecated 27 Nov 2024; MSD provides equivalent Echo Nest features. The summary file covers the full 1M-song MSD and loads in seconds (single vectorised HDF5 read).
 
 ## Setup
 
@@ -26,20 +26,22 @@ Both datasets are fully offline. No API keys required. The Spotify `/audio-featu
 pip install numpy pandas h5py scikit-learn matplotlib seaborn torch pyro-ppl jupyter
 ```
 
-Symlink or copy data into `data/`:
-```bash
-mkdir -p data/lastfm1k data/msd
-ln -s /Users/magle/Desktop/Repos/lastfm-dataset-1K/* data/lastfm1k/
-ln -s /Users/magle/Desktop/Repos/MillionSongSubset data/msd/MillionSongSubset
+Place (or symlink) the data as siblings of this repo clone:
 ```
+Desktop/Repos/
+├── MBML---2026/          ← this repo
+├── lastfm-dataset-1K/    ← Last.fm 1K folder
+└── msd_summary_file.h5   ← MSD summary HDF5
+```
+No manual path editing needed — the notebook resolves them via `Path.cwd().parent`.
 
 ## Running
 
 **Phase 0 — data pipeline (run first, produces the clean CSVs):**
 ```bash
-jupyter notebook phase0_data.ipynb  # Run All Cells — takes ~5 min on M-series Mac
+jupyter notebook phase0_data.ipynb  # Run All Cells — takes ~1–2 min on M-series Mac
 ```
-Outputs: `data/songs_clean.csv` (~1k–3k songs), `data/listens_clean.csv` (pos + neg listen events).
+Outputs: `data/songs_clean.csv` (matched corpus), `data/listens_clean.csv` (pos + neg listen events).
 
 **Phases 1–4 — model notebook:**
 ```bash
@@ -68,7 +70,8 @@ x_s        ~ MVN(μ_{z_s}, Σ_{z_s})     [observed audio features, D=6]
 l_us       ~ Bernoulli(σ(θ_u · e_{z_s})) [did user u listen to song s?]
 ```
 
-Audio features: `loudness, tempo, energy, danceability, mode, time_signature` — all MinMax-scaled to [0,1].
+Audio features: `loudness, tempo, key, mode, time_signature, duration` — all MinMax-scaled to [0,1].
+(`energy` and `danceability` are not stored in the MSD summary file.)
 
 ## Repository layout
 

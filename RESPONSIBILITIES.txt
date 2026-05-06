@@ -42,14 +42,14 @@ PHASE OWNERSHIP
 ================================================================
 
 PAPER SPLIT (Phase 5)
-IEEE 6-page double-column LaTeX
+IEEE 6-page double-column LaTeX ----Magle readies the latex
 
   Section 1 — Introduction          Elmo
-  Section 2 — Model (PGM, math)     Anton
+  Section 2 — Model (PGM, math)     Anton + Magle
   Section 3 — Inference (SVI/MCMC)  Anton
   Section 4 — Data                  Magle
-  Section 5 — Results               Brams
-  Section 6 — Discussion            Brams
+  Section 5 — Results               Brams + Magle
+  Section 6 — Discussion            Brams + Elmo
   Final proof-read & formatting     Elmo
 
 ================================================================

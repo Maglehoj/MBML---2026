@@ -17,10 +17,12 @@ The deliverables are a fully-explained Jupyter notebook plus a 6-page IEEE doubl
 
 We originally planned to use the Spotify API (`/audio-features`), but **Spotify deprecated this endpoint on 27 November 2024** — new apps now receive HTTP 403, with no replacement. The Million Song Dataset (MSD) was created in 2011 from the same Echo Nest features that Spotify later acquired and used internally, so MSD provides equivalent pre-computed features. Last.fm 1K provides far richer user listening histories than the Spotify user endpoint ever did. Both are fully offline, no API keys needed.
 
-| Dataset | Provides | Size | Source |
+| Dataset | Provides | Size | Use in Phase 1 |
 |---|---|---|---|
-| **Last.fm 1K** | Real listening histories for ~1,000 users (user, timestamp, artist, track) | 1.3 GB extracted | http://ocelma.net/MusicRecommendationDataset/lastfm-1K.html |
-| **MSD summary file** | Pre-computed Echo Nest audio features for all 1,000,000 MSD songs, single HDF5 | ~300 MB | http://millionsongdataset.com/pages/getting-dataset/ |
+| **songs_clean.csv** | Matched corpus of songs with 6 audio features (loudness, tempo, key, mode, time_signature, duration), MinMax-scaled, + genre column | 292k rows | Primary input; features used for Gaussian, Categorical, Bernoulli likelihoods |
+| **listens_clean.csv** | User listening events (user, song, play_count, listened binary) | 16.8M rows | Held for Phase 3 (user extension); not used in Phase 1 |
+| Last.fm 1K source | ~1,000 users, ~19M scrobbles (history only) | 1.3 GB | Already processed → songs_clean.csv |
+| MSD summary source | Pre-computed Echo Nest features for 1M songs | ~300 MB | Already processed → songs_clean.csv |
 
 They join on a normalised `(artist_name, track_title)` key. Measured match rate: **45.6% of scrobbles (~8.7M / 19M rows)** after aggressive normalisation (strip live/remaster/version suffixes before lowercasing). Artist coverage is 81% — the gap is MSD missing specific hit tracks, not artists. Acceptable; noted as catalog-bias attrition in the paper. Note: `energy` and `danceability` are not stored in the summary file (all-zero); we use `key` and `duration` instead.
 
@@ -53,13 +55,13 @@ The project is graded on how well it applies course concepts. Anything outside t
 | 1 | Probability review | Bayes theorem |
 | 2 | PGM foundations | Plates, conditional independence |
 | 3 | PGM foundations II | Conjugate priors, generative processes |
-| 4 | Mixture models | `pyro.sample`, `pyro.plate`, Categorical mixtures, `TraceEnum_ELBO` |
+| 4 | Mixture models | `pyro.sample`, `pyro.plate`, Categorical mixtures, Gaussian/Categorical/Bernoulli likelihoods, `TraceEnum_ELBO` |
 | 5 | Regression | Bayesian linear/Poisson regression, PGM + neural net |
-| 6 | Classification + hierarchical | Logistic regression, hierarchical Dirichlet priors |
+| 6 | Classification + hierarchical | Logistic regression, Beta-Bernoulli, hierarchical Dirichlet priors |
 | 7 | Temporal | (not used) |
-| 8 | Topic models | LDA-style plate structure mirrors users → moods → songs |
+| 8 | Topic models | LDA-style Dirichlet-Categorical for discrete features (key, time_signature) |
 | 9 | MCMC | NUTS in Pyro, R-hat diagnostics |
-| 10 | Variational inference | ELBO, SVI, mean-field guide, `AutoNormal` / `AutoDiagonalNormal` |
+| 10 | Variational inference | ELBO, SVI, mean-field guide, `AutoDiagonalNormal`, K-selection via elbow |
 | 11 | Generative models | (PPCA / VAE — relevant for context, not used directly) |
 | 12 | Gaussian processes | (not used) |
 
@@ -190,15 +192,17 @@ The notebook does, in order:
 1. Imports + seed + plot config.
 2. Load Last.fm scrobbles (~19M rows from a 1.3 GB TSV).
 3. Load MSD summary HDF5 (`msd_summary_file.h5`) in a single vectorised read — all 1,000,000 songs in seconds.
-4. Normalise (artist, track) strings on both sides: lowercase, strip, replace `-`/`_` with space, **strip live/remaster/version suffixes** (everything after ` - ` or a `(` / `[`).
-5. Inner-join MSD × Last.fm on `(artist_norm, track_norm)`.
-6. Aggregate listen events; filter active users with ≥5 listens.
-7. 5:1 negative sampling per user.
-8. MinMax-scale the 6 features to $[0,1]$, drop NaN rows.
-9. Save `data/songs_clean.csv` and `data/listens_clean.csv`.
-10. EDA: matched corpus size, listen-count distribution per user, feature correlation heatmap, feature histograms, summary printout.
+4. Load `unique_tracks.txt` (TR→SO ID mapping) and tagtraum genre annotations (`msd_tagtraum_cd2.cls`). Tagtraum uses TR... track IDs; the summary HDF5 uses SO... song IDs — bridge via `unique_tracks.txt`. Result: ~157k songs (54%) get a genre label; remainder set to `"Unknown"`.
+5. Normalise (artist, track) strings on both sides: lowercase, strip, replace `-`/`_` with space, **strip live/remaster/version suffixes** (everything after ` - ` or a `(` / `[`).
+6. Inner-join MSD × Last.fm on `(artist_norm, track_norm)`.
+7. Merge tagtraum genres into matched corpus on `song_id`; fill missing with `"Unknown"`.
+8. Aggregate listen events; filter active users with ≥5 listens.
+9. 5:1 negative sampling per user.
+10. MinMax-scale the 6 features to $[0,1]$, drop NaN rows.
+11. Save `data/songs_clean.csv` (includes `genre` column) and `data/listens_clean.csv`.
+12. EDA: matched corpus size, genre coverage, listen-count distribution per user, feature correlation heatmap, feature histograms, summary printout.
 
-**Gate** (must pass before Phase 1): `Matched corpus size`, `Active users (>=5 listens)`, `Positive listen events`, `Negative listen events`, and `df_songs.describe()` of the 6 scaled features.
+**Gate** (must pass before Phase 1): `Matched corpus size`, `Active users (>=5 listens)`, `Positive listen events`, `Negative listen events`, genre coverage %, and `df_songs.describe()` of the 6 scaled features.
 
 **Run:**
 ```bash
@@ -210,21 +214,32 @@ jupyter notebook phase0_data.ipynb   # then Run All Cells
 
 ### Phase 1 — Baseline Bayesian GMM in Pyro
 
-**Goal:** A working Pyro model that clusters songs into $K$ mood groups using audio features only. No users yet.
+**Goal:** A working Pyro model that clusters songs into $K=6$ mood groups using audio features only. No users yet.
 
-**Inputs:** `data/songs_clean.csv`.
+**Inputs:** `data/songs_clean.csv` (including `genre` column from tagtraum).
+
+**K=6 with genre-stratified warm-start:** Naive K-means initialisation at K≥3 collapses to major vs. minor (the binary `mode` feature dominates). The fix: map the 15 tagtraum genres to 6 mood groups, compute per-group feature means as K-means seed centres, then run one K-means pass. This gives the SVI a well-separated warm-start that survives optimisation.
+
+| Group | Genres |
+|---|---|
+| 0 Rock/Metal/Punk | Rock, Metal, Punk |
+| 1 Electronic | Electronic |
+| 2 Pop/RnB | Pop, RnB |
+| 3 Rap/Reggae | Rap, Reggae |
+| 4 Jazz/Blues | Jazz, Blues |
+| 5 Country/Folk/Latin | Country, Folk, Latin, World, New Age |
 
 **Model:**
 ```python
 def model(X, K=6):
     D = X.shape[1]  # 6 audio features
-    pi = pyro.sample("pi", dist.Dirichlet(torch.ones(K) / K))
+    pi = pyro.sample("pi", dist.Dirichlet(5.0 * torch.ones(K)))
 
     with pyro.plate("moods", K):
         mu = pyro.sample("mu",
-            dist.Normal(0.5 * torch.ones(D), 0.5 * torch.ones(D)).to_event(1))
+            dist.Normal(mu_prior_loc, 0.1 * torch.ones(D)).to_event(1))
         sigma = pyro.sample("sigma",
-            dist.LogNormal(torch.zeros(D), torch.ones(D)).to_event(1))
+            dist.LogNormal(np.log(0.1) * torch.ones(D), 0.3 * torch.ones(D)).to_event(1))
 
     with pyro.plate("songs", X.shape[0]):
         z = pyro.sample("z", dist.Categorical(pi),
@@ -388,8 +403,8 @@ samples = predictive(X_blank)  # samples["obs"] shape: (S, N, D)
 - [x] MSD summary file at `../msd_summary_file.h5` (1,000,000 songs, single HDF5).
 - [x] `CONVENTIONS.md` extracted from course exercises.
 - [x] `README.md` written.
-- [x] `phase0_data.ipynb` written (27 cells).
-- [ ] **Phase 0 run end-to-end** — produces `songs_clean.csv` and `listens_clean.csv`.
+- [x] `phase0_data.ipynb` written and run end-to-end — produces `songs_clean.csv` (with `genre` column) and `listens_clean.csv`.
+- [x] tagtraum genre annotations (`msd_tagtraum_cd2.cls`) integrated into Phase 0 via `unique_tracks.txt` TR→SO bridge (~54% coverage).
 - [ ] Phase 1 — baseline GMM (`mood_model.ipynb`).
 - [ ] Phase 2 — NUTS comparison.
 - [ ] Phase 3 — user-taste extension.
@@ -407,7 +422,8 @@ These are the non-obvious choices that future-you will want to be reminded of.
 - **Six features only.** `loudness, tempo, key, mode, time_signature, duration`. `energy` and `danceability` are all-zero in the summary file (only stored in per-track HDF5s). `key` (chromatic 0–11) and `duration` are musically meaningful substitutes. `hotttnesss` and segment pitches add noise.
 - **5:1 negative sampling.** Standard for implicit-feedback Bernoulli likelihoods. Higher ratios (10:1) overweight the negatives; lower (1:1) underweight them.
 - **Active-user filter ≥5 listens.** Below 5, the per-user $\theta_u$ posterior is dominated by the prior — we'd be reporting noise.
-- **K=6 moods.** Corresponds to the typical "mood wheel" granularity in music IR. We can sweep $K \in \{4, 6, 8\}$ in Phase 1 and pick the most interpretable.
+- **K=6 moods with genre-stratified init.** Naive K-means at K≥3 collapses to major/minor because the binary `mode` feature dominates. Fixed by mapping 15 tagtraum genres to 6 mood groups and using per-group feature means as K-means seed centres before SVI warm-start. Do not revert to K=2 or random init.
+- **tagtraum genre annotations.** `msd_tagtraum_cd2.cls` at `../msd_tagtraum_cd2.cls`. Uses MSD track IDs (TR...) — does NOT directly join to the summary HDF5 (which uses SO... Echo Nest song IDs). Bridge via `unique_tracks.txt` (`../unique_tracks.txt`). Genre coverage ~54% (157k of 292k matched songs). Used only for K-means initialisation — not a model feature. Falls back to n_init=20 multi-restart K-means if coverage drops below 30%.
 - **MinMax scaling, not z-score.** `mode` and `time_signature` are categorical-ish; z-scoring would distort them. MinMax to $[0,1]$ keeps them on the same scale as the continuous features without changing their shape.
 - **`TraceEnum_ELBO` for SVI, `infer_discrete` + NUTS for MCMC.** These are the canonical Pyro patterns the course uses for mixtures with discrete latents. Discrete latents have no gradients, so SVI must enumerate them and NUTS must marginalise them.
 

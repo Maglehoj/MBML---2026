@@ -15,13 +15,18 @@ PHASE OWNERSHIP
 (Owner = leads implementation and is responsible for the gate passing)
 
   Phase 0 — Data pipeline          Magle
-    phase0_data.ipynb — loads MSD summary + Last.fm, joins,
-    normalises, saves songs_clean.csv and listens_clean.csv.
+    01_phase0_data.ipynb — loads MSD summary + Last.fm, joins,
+    normalises, merges tagtraum genre annotations (msd_tagtraum_cd2.cls)
+    via unique_tracks.txt TR→SO ID bridge (~54% genre coverage),
+    saves songs_clean.csv (with genre column) and listens_clean.csv.
     STATUS: done
 
   Phase 1 — Baseline GMM (SVI)     Anton
-    mood_model.ipynb — Pyro Bayesian GMM over audio features,
-    SVI with TraceEnum_ELBO, ELBO convergence plot, mood interpretation.
+    phase1_mood_model_w-genres.ipynb — Bayesian Gaussian Mixture Model
+    with fully-typed mixed likelihoods (Gaussian/Categorical/Bernoulli).
+    Automatically selects K via ΔELBO elbow method. SVI with TraceEnum_ELBO,
+    4-seed ensemble (1500 steps each). K-means warm-start initialization.
+    STATUS: done (ready for review)
 
   Phase 2 — NUTS comparison         Elmo
     Same model re-run with HMC/NUTS, R-hat diagnostics,

@@ -18,14 +18,17 @@ MBML---2026/
 External raw data (sibling of repo clone):
 - Last.fm 1K: `../lastfm-dataset-1K/`
 - MSD summary: `../msd_summary_file.h5` (single HDF5, full 1M-song MSD)
+- tagtraum genre annotations: `../msd_tagtraum_cd2.cls` (~280k songs, 15 genres, tab-separated, uses TR... track IDs)
+- MSD track→song ID mapping: `../unique_tracks.txt` (1M rows, `trackID<SEP>songID<SEP>artist<SEP>title`, bridges TR→SO IDs)
 
 ## Data
 | Dataset | Content | Size | Join key |
 |---|---|---|---|
 | Last.fm 1K | ~19M scrobbles, ~1000 users | 1.3 GB TSV | `(artist_norm, track_norm)` |
 | MSD summary file | 1M songs, single HDF5, vectorised load | ~300 MB | same |
-| songs_clean.csv | matched corpus, MinMax-scaled features | TBD rows | — |
-| listens_clean.csv | pos+neg listen events | — | — |
+| tagtraum cd2 | majority-vote genre labels, ~280k songs, 15 genres | ~280k rows TSV | `song_id` |
+| songs_clean.csv | matched corpus, MinMax-scaled features + `genre` column | 292k rows | — |
+| listens_clean.csv | pos+neg listen events | 16.8M rows | — |
 
 Features: `loudness, tempo, key, mode, time_signature, duration` (all scaled to [0,1]).
 Note: `energy` and `danceability` are all-zero in the summary file (only in per-track HDF5s) — replaced by `key` (chromatic 0–11) and `duration` (seconds).
@@ -42,8 +45,8 @@ Observed: `x_s` (audio features), `l_us` (listen events). Latent: `z_s, θ_u, μ
 ## Phases
 | Phase | Status | Notebook | Inputs | Gate |
 |---|---|---|---|---|
-| 0 — data pipeline | ✓ DONE | `phase0_data.ipynb` | raw TSVs + HDF5 | `songs_clean.csv`, `listens_clean.csv` exist |
-| 1 — baseline GMM | TODO | `mood_model.ipynb` | `songs_clean.csv` | ELBO converged, K moods not collapsed |
+| 0 — data pipeline | ✓ DONE | `phase0_data.ipynb` | raw TSVs + HDF5 + tagtraum cls | `songs_clean.csv` (with `genre`), `listens_clean.csv` exist |
+| 1 — baseline GMM | ✓ DONE (Anton) | `phase1_mood_model_w-genres.ipynb` | `songs_clean.csv` | Mixed-likelihood, K auto-selected via ΔELBO, SVI converged, 4-seed ensemble |
 | 2 — NUTS comparison | TODO | same | same | R-hat < 1.05, SVI≈NUTS posteriors |
 | 3 — user extension | TODO | same | both CSVs | θ_u posteriors interpretable |
 | 4 — PPC | TODO | same | both CSVs | predictive histograms overlap real |
@@ -52,9 +55,11 @@ Observed: `x_s` (audio features), `l_us` (listen events). Latent: `z_s, θ_u, μ
 
 ## Pyro patterns (canonical — match these exactly)
 
-**SVI for GMM (Phase 1):**
+**SVI for mixed-likelihood GMM (Phase 1):**
 ```python
-guide = AutoDiagonalNormal(pyro.poutine.block(model, hide=["z"]))
+# Model: Gaussian for continuous, Categorical for discrete, Bernoulli for binary
+# Discrete latent z: use infer_discrete + config_enumerate + TraceEnum_ELBO
+guide = AutoDiagonalNormal(pyro.poutine.block(model, hide=["z"]), init_scale=0.05)
 svi = SVI(model, guide, Adam({"lr": 1e-2}), TraceEnum_ELBO(max_plate_nesting=1))
 ```
 
@@ -99,7 +104,8 @@ plt.rcParams['figure.figsize'] = (12, 8)
 - **6 features only** — `loudness, tempo, key, mode, time_signature, duration`. `energy`/`danceability` are all-zero in the summary file; `key` and `duration` are good substitutes. `hotttnesss` and segment pitches add noise.
 - **5:1 negative sampling** — standard for implicit-feedback Bernoulli likelihoods.
 - **Active-user filter ≥5** — below 5, θ_u posterior is dominated by prior.
-- **K=6 moods** — sweep {4,6,8} in Phase 1, pick most interpretable.
+- **K=6 moods with genre-stratified init** — naive K-means at K≥3 collapses to major/minor (binary `mode` dominates). Fix: map 15 tagtraum genres → 6 mood groups, compute per-group feature means as K-means seed centres, run one K-means pass. Do not revert to K=2 or random init.
+- **tagtraum ID mismatch** — tagtraum uses MSD track IDs (TR...), summary HDF5 uses Echo Nest song IDs (SO...). Bridge via `unique_tracks.txt` (`trackID<SEP>songID<SEP>artist<SEP>title`). Coverage ~54% after bridge; fallback to `n_init=20` K-means if coverage < 30%. Genre used for K-means init only — NOT a model feature. 15 genres → 6 groups: Rock/Metal/Punk, Electronic, Pop/RnB, Rap/Reggae, Jazz/Blues, Country/Folk/Latin.
 - **MinMax not z-score** — `mode` and `time_signature` are categorical-ish; z-score distorts them.
 
 ## Reference notebooks (read before writing model code)

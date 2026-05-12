@@ -5,6 +5,9 @@ data/
 *.h5
 *.hdf5
 
+# Salesforce DX
+.sfdx/
+
 # macOS
 .DS_Store
 

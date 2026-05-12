@@ -50,11 +50,11 @@ PAPER SPLIT (Phase 5)
 IEEE 6-page double-column LaTeX ----Magle readies the latex
 
   Section 1 — Introduction          Elmo
+  Section 1.5 — Data                Magle
   Section 2 — Model (PGM, math)     Anton + Magle
   Section 3 — Inference (SVI/MCMC)  Anton
-  Section 4 — Data                  Magle
-  Section 5 — Results               Brams + Magle
-  Section 6 — Discussion            Brams + Elmo
+  Section 4 — Results               Brams + Magle
+  Section 5 — Discussion            Brams + Elmo
   Final proof-read & formatting     Elmo
 
 ================================================================

@@ -35,12 +35,17 @@ Note: `energy` and `danceability` are all-zero in the summary file (only in per-
 
 ## PGM (short form)
 ```
-μ_k ~ Normal(μ₀, κ₀⁻¹·Σ_k)     Σ_k ~ InverseWishart(ν, Ψ)     [K moods]
-θ_u ~ Dirichlet(α)                                                [U users]
-z_s ~ Categorical(π)             x_s ~ MVN(μ_{z_s}, Σ_{z_s})    [S songs]
-l_us ~ Bernoulli(σ(θ_u · e_{z_s}))                               [U×S listens]
+π ~ Dirichlet(5·1_K)
+μ_k ~ N(0,I_3)   σ_k ~ LogNormal(0,0.5²I_3)   θ^key_k ~ Dir(1_12)   [K moods]
+θ^ts_k ~ Dir(1_6)   p_k ~ Beta(2,2)                                   [K moods]
+θ_u ~ Dirichlet(α)                                                     [U users]
+z_s ~ Categorical(π)                                                   [S songs]
+x^cont_s|z_s ~ N(μ_{z_s}, diag(σ²_{z_s}))   x^key_s|z_s ~ Cat(θ^key_{z_s})
+x^ts_s|z_s ~ Cat(θ^ts_{z_s})                 x^mode_s|z_s ~ Bern(p_{z_s})
+l_us ~ Bernoulli(σ(θ_u · e_{z_s}))                                    [U×S listens]
 ```
-Observed: `x_s` (audio features), `l_us` (listen events). Latent: `z_s, θ_u, μ_k, Σ_k`.
+Observed: `x^cont, x^key, x^ts, x^mode` (audio features), `l_us` (listen events).
+Latent: `z_s, θ_u, μ_k, σ_k, θ^key_k, θ^ts_k, p_k`.
 
 ## Phases
 | Phase | Status | Notebook | Inputs | Gate |
@@ -106,8 +111,8 @@ plt.rcParams['figure.figsize'] = (12, 8)
 - **6 features only** — `loudness, tempo, key, mode, time_signature, duration`. `energy`/`danceability` are all-zero in the summary file; `key` and `duration` are good substitutes. `hotttnesss` and segment pitches add noise.
 - **5:1 negative sampling** — standard for implicit-feedback Bernoulli likelihoods.
 - **Active-user filter ≥5** — below 5, θ_u posterior is dominated by prior.
-- **K=6 moods with genre-stratified init** — naive K-means at K≥3 collapses to major/minor (binary `mode` dominates). Fix: map 15 tagtraum genres → 6 mood groups, compute per-group feature means as K-means seed centres, run one K-means pass. Do not revert to K=2 or random init.
-- **tagtraum ID mismatch** — tagtraum uses MSD track IDs (TR...), summary HDF5 uses Echo Nest song IDs (SO...). Bridge via `unique_tracks.txt` (`trackID<SEP>songID<SEP>artist<SEP>title`). Coverage ~54% after bridge; fallback to `n_init=20` K-means if coverage < 30%. Genre used for K-means init only — NOT a model feature. 15 genres → 6 groups: Rock/Metal/Punk, Electronic, Pop/RnB, Rap/Reggae, Jazz/Blues, Country/Folk/Latin.
+- **K=10 via ΔELBO elbow** — K is auto-selected by sweeping K=2..15, fitting 500 SVI steps each, and picking the elbow of the per-component ELBO gain. Yielded K=10. Genre-stratified init was considered but abandoned: genres and moods are different constructs, and the mixed-likelihood loss landscape is well-conditioned without it. Plain multi-restart K-means (`n_init=20`) on the 3 z-scored continuous features is used instead.
+- **tagtraum ID mismatch** — tagtraum uses MSD track IDs (TR...), summary HDF5 uses Echo Nest song IDs (SO...). Bridge via `unique_tracks.txt` (`trackID<SEP>songID<SEP>artist<SEP>title`). Coverage ~54% after bridge. Genre saved in `songs_clean.csv` for post-hoc interpretation only — NOT a model feature and NOT used for K-means init.
 - **MinMax not z-score** — `mode` and `time_signature` are categorical-ish; z-score distorts them.
 
 ## Reference notebooks (read before writing model code)

@@ -214,41 +214,36 @@ jupyter notebook phase0_data.ipynb   # then Run All Cells
 
 ---
 
-### Phase 1 — Baseline Bayesian GMM in Pyro
+### Phase 1 — Baseline Bayesian GMM in Pyro ✓ DONE
 
-**Goal:** A working Pyro model that clusters songs into $K=6$ mood groups using audio features only. No users yet.
+**Goal:** A working Pyro model that clusters songs into K mood groups using audio features only. No users yet.
 
-**Inputs:** `data/songs_clean.csv` (including `genre` column from tagtraum).
+**Inputs:** `data/songs_clean.csv`.
 
-**K=6 with genre-stratified warm-start:** Naive K-means initialisation at K≥3 collapses to major vs. minor (the binary `mode` feature dominates). The fix: map the 15 tagtraum genres to 6 mood groups, compute per-group feature means as K-means seed centres, then run one K-means pass. This gives the SVI a well-separated warm-start that survives optimisation.
+**K selection:** K is auto-selected via the ΔELBO elbow (sweep K=2..15, 500 SVI steps each). Yielded K=10. Genre-stratified init was abandoned — genres and moods are different constructs, and the mixed-likelihood loss landscape is well-conditioned without it. Plain multi-restart K-means (`n_init=20`) on the 3 z-scored continuous features is used instead.
 
-| Group | Genres |
-|---|---|
-| 0 Rock/Metal/Punk | Rock, Metal, Punk |
-| 1 Electronic | Electronic |
-| 2 Pop/RnB | Pop, RnB |
-| 3 Rap/Reggae | Rap, Reggae |
-| 4 Jazz/Blues | Jazz, Blues |
-| 5 Country/Folk/Latin | Country, Folk, Latin, World, New Age |
-
-**Model:**
+**Model (mixed likelihoods):**
 ```python
-def model(X, K=6):
-    D = X.shape[1]  # 6 audio features
+def model(X_cont, X_key, X_ts, X_mode, K, mu_prior_loc):
+    D = X_cont.shape[1]  # 3 continuous features
     pi = pyro.sample("pi", dist.Dirichlet(5.0 * torch.ones(K)))
 
     with pyro.plate("moods", K):
-        mu = pyro.sample("mu",
-            dist.Normal(mu_prior_loc, 0.1 * torch.ones(D)).to_event(1))
-        sigma = pyro.sample("sigma",
-            dist.LogNormal(np.log(0.1) * torch.ones(D), 0.3 * torch.ones(D)).to_event(1))
+        mu_cont   = pyro.sample("mu_cont",
+            dist.Normal(torch.zeros(D), torch.ones(D)).to_event(1))
+        sigma_cont = pyro.sample("sigma_cont",
+            dist.LogNormal(torch.zeros(D), 0.5 * torch.ones(D)).to_event(1))
+        theta_key = pyro.sample("theta_key", dist.Dirichlet(torch.ones(N_KEY)))
+        theta_ts  = pyro.sample("theta_ts",  dist.Dirichlet(torch.ones(N_TS)))
+        p_mode    = pyro.sample("p_mode",    dist.Beta(2.0, 2.0))
 
-    with pyro.plate("songs", X.shape[0]):
+    with pyro.plate("songs", X_cont.shape[0]):
         z = pyro.sample("z", dist.Categorical(pi),
                         infer={"enumerate": "parallel"})
-        pyro.sample("obs",
-            dist.Normal(mu[z], sigma[z]).to_event(1),
-            obs=X)
+        pyro.sample("obs_cont", dist.Normal(mu_cont[z], sigma_cont[z]).to_event(1), obs=X_cont)
+        pyro.sample("obs_key",  dist.Categorical(theta_key[z]), obs=X_key)
+        pyro.sample("obs_ts",   dist.Categorical(theta_ts[z]),  obs=X_ts)
+        pyro.sample("obs_mode", dist.Bernoulli(p_mode[z]),      obs=X_mode)
 ```
 
 **Inference:** SVI with `AutoDiagonalNormal` over continuous latents and `TraceEnum_ELBO(max_plate_nesting=1)` to enumerate the discrete `z`.
@@ -407,7 +402,7 @@ samples = predictive(X_blank)  # samples["obs"] shape: (S, N, D)
 - [x] `README.md` written.
 - [x] `phase0_data.ipynb` written and run end-to-end — produces `songs_clean.csv` (with `genre` column) and `listens_clean.csv`.
 - [x] tagtraum genre annotations (`msd_tagtraum_cd2.cls`) integrated into Phase 0 via `unique_tracks.txt` TR→SO bridge (~54% coverage).
-- [ ] Phase 1 — baseline GMM (`mood_model.ipynb`).
+- [x] Phase 1 — baseline GMM (`phase1_mood_model_w-genres.ipynb`).
 - [ ] Phase 2 — NUTS comparison.
 - [ ] Phase 3 — user-taste extension.
 - [ ] Phase 4 — posterior predictive checks.

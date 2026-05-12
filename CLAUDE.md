@@ -84,8 +84,10 @@ import pyro.distributions as dist
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Setup
-np.random.seed(42)
+# Setup — use seed 67 everywhere
+np.random.seed(67)
+torch.manual_seed(67)       # Phase 1+ only
+pyro.set_rng_seed(67)       # Phase 1+ only
 plt.style.use('ggplot')
 %matplotlib inline
 plt.rcParams['figure.figsize'] = (12, 8)

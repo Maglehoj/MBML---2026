@@ -56,7 +56,7 @@ jupyter notebook phase1_mood_model_w-genres.ipynb
 |---|---|---|
 | 0 | Data pipeline: load, join, normalise, save CSVs | ✓ Done |
 | 1 | Baseline Bayesian GMM in Pyro (SVI) | ✓ Done |
-| 2 | NUTS/MCMC comparison, R-hat diagnostics | TODO |
+| 2 | NUTS/MCMC comparison, R-hat diagnostics | ✓ Done |
 | 3 | User-taste extension (Dirichlet theta_u + listen-event plate) | TODO |
 | 4 | Posterior predictive checks | TODO |
 | 5 | IEEE 6-page paper (double-column LaTeX) | In progress |

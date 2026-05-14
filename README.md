@@ -57,9 +57,9 @@ jupyter notebook phase1_mood_model_w-genres.ipynb
 | 0 | Data pipeline: load, join, normalise, save CSVs | ✓ Done |
 | 1 | Baseline Bayesian GMM in Pyro (SVI) | ✓ Done |
 | 2 | NUTS/MCMC comparison, R-hat diagnostics | ✓ Done |
-| 3 | User-taste extension (Dirichlet theta_u + listen-event plate) | TODO |
-| 4 | Posterior predictive checks | TODO |
-| 5 | IEEE 6-page paper (double-column LaTeX) | In progress |
+| 3 | User-taste extension (Dirichlet theta_u + user/song biases + listen-event plate) | ✓ Done |
+| 4 | Posterior predictive checks | Notebook drafted, not yet executed |
+| 5 | IEEE 6-page paper (double-column LaTeX) | In progress (Results/Discussion/Conclusion empty) |
 | 6 | Notebook polish to course style | TODO |
 
 ## Model sketch
@@ -79,11 +79,16 @@ x_ts_s       ~ Categorical(theta_ts_{z_s})        [observed]
 x_mode_s     ~ Bernoulli(p_{z_s})                 [observed]
 ```
 
-Phase 3 extension adds:
+Phase 3 extension adds (per-user taste, per-user activity, per-song popularity, learnable global scaling):
 ```
-theta_u  ~ Dirichlet(alpha)                        [user taste over moods]
-l_us     ~ Bernoulli(sigma(theta_u . e_{z_s}))    [listen event]
+theta_u  ~ Dirichlet(0.5 * 1_K)                    [user taste over moods]
+alpha_u  ~ N(0, 1)                                 [per-user activity bias]
+gamma_s  ~ N(0, 1)                                 [per-song popularity bias]
+b, beta  = pyro.param (learnable globals;          [global intercept + taste scaling]
+           b init -1.6, beta init 5.0, beta>0)
+l_us     ~ Bernoulli(sigma(b + beta * theta_{u, z_s} + alpha_u + gamma_s))
 ```
+The MAP mood assignment $z_s$ is taken from the Phase 1 fit and treated as fixed in Phase 3, so the only discrete latent is gone and `Trace_ELBO` suffices. The two global params are registered with `pyro.param` and optimised by Adam alongside the variational parameters.
 
 K is auto-selected via the ΔELBO elbow (K=10 from data). Continuous features are z-scored in Phase 1; all features MinMax-scaled to [0,1] in Phase 0. (`energy` and `danceability` are absent from the MSD summary file.)
 

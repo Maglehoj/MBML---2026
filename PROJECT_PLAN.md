@@ -101,11 +101,25 @@ S-song plate  (repeated S times):
                                             — observed audio features
                                               (D-vector, D=6, from MSD)
 
+U-user plate (activity bias, in addition to θ_u above):
+  α_u  ~ N(0, 1)                           — per-user listening propensity
+
+S-song plate (popularity bias):
+  γ_s  ~ N(0, 1)                           — per-song popularity
+
+Global learnable parameters (pyro.param, not random variables):
+  b    — global intercept (init -1.6 ≈ σ⁻¹(0.166), matches base rate)
+  β>0  — taste-scaling coefficient (init 5.0)
+
 U×S listen-event plate  (one per observed (u,s) pair):
-  l_us ~ Bernoulli(σ(θ_u · e_{z_s}))       — did user u listen to song s?
-                                              σ = sigmoid, e_{z_s} = one-hot mood indicator
+  l_us ~ Bernoulli(σ(b + β · θ_{u, z_s} + α_u + γ_s))
+                                            — did user u listen to song s?
+                                              σ = sigmoid; θ_{u, z_s} is the
+                                              z_s-th coordinate of θ_u
                                               (l=1 from Last.fm, l=0 sampled at 5:1)
 ```
+
+In Phase 3 the song-level latent $z_s$ is **not re-sampled**: we take the MAP assignment from the fitted Phase 1 guide and treat it as observed. This removes the only discrete latent in the listen-event submodel, so a plain `Trace_ELBO` is sufficient and no enumeration is needed.
 
 ### Variable key
 
@@ -117,7 +131,11 @@ U×S listen-event plate  (one per observed (u,s) pair):
 | μ_k | D-vector (D=6) | latent | Mean audio feature vector of mood k |
 | Σ_k | D×D matrix | latent | Covariance of mood k |
 | θ_u | K-vector (simplex) | latent | User u's distribution over moods |
-| z_s | integer in {1..K} | latent | Mood assignment of song s |
+| α_u | scalar | latent (Phase 3) | Per-user activity bias, N(0,1) prior |
+| γ_s | scalar | latent (Phase 3) | Per-song popularity bias, N(0,1) prior |
+| b | scalar | learnable global param | Logit intercept, init −1.6 |
+| β | positive scalar | learnable global param | Taste-scaling coefficient, init 5.0 |
+| z_s | integer in {1..K} | latent (Phase 1) / fixed MAP (Phase 3) | Mood assignment of song s |
 | x_s | D-vector | **observed** | Audio features of song s from MSD |
 | l_us | binary | **observed** | Whether user u listened to song s |
 
@@ -130,10 +148,12 @@ U×S listen-event plate  (one per observed (u,s) pair):
 - Goal: recover $K$ interpretable mood clusters.
 
 **Extension (Phase 3):**
-- Add user plate and listen-event plate.
-- $\theta_u \sim \mathrm{Dirichlet}(\alpha)$ per user.
-- $l_{us} \sim \mathrm{Bernoulli}(\sigma(\theta_u^\top e_{z_s}))$.
-- Goal: jointly learn mood clusters and user taste profiles.
+- Add user plate, song-bias plate, and listen-event plate.
+- $\theta_u \sim \mathrm{Dirichlet}(0.5 \cdot \mathbf{1}_K)$ per user.
+- $\alpha_u \sim \mathcal{N}(0, 1)$ per user (activity bias) and $\gamma_s \sim \mathcal{N}(0, 1)$ per song (popularity bias).
+- Learnable global parameters $b$ and $\beta > 0$ via `pyro.param`.
+- $l_{us} \sim \mathrm{Bernoulli}(\sigma(b + \beta \cdot \theta_{u, z_s} + \alpha_u + \gamma_s))$ where $z_s$ is the fixed MAP from Phase 1.
+- Goal: recover interpretable per-user taste profiles while separating mood preference from raw user activity and song popularity.
 
 ---
 
@@ -303,40 +323,46 @@ posterior = mcmc.get_samples()
 
 ---
 
-### Phase 3 — User-taste extension
+### Phase 3 — User-taste extension ✓ DONE
 
-**Goal:** Add the user plate and listen-event plate. Jointly learn mood clusters and user taste profiles.
+**Goal:** Add the user plate, song-bias plate, and listen-event plate. Recover interpretable per-user taste profiles while separating mood preference from overall user activity and song popularity.
 
-**Inputs:** `data/songs_clean.csv` + `data/listens_clean.csv`.
+**Inputs:** `data/songs_clean.csv` + `data/listens_clean.csv` + the MAP $z_s$ extracted from the fitted Phase 1 guide.
 
-**Model addition:**
+**Why this shape and not the simpler $\sigma(\theta_u \cdot e_{z_s})$:** Without bias terms, $\theta_u$ has to absorb every source of variation in the listen signal — that some users scrobble more than others, and that some songs are universally popular. The ELBO improved from ~7.5M to ~5.6M after adding $\alpha_u$ and $\gamma_s$, confirming the decomposition explains real variance. The learnable scalar $b$ removes the need to hard-code a magic-number offset to match the empirical listen base rate; $\beta > 0$ lets the optimiser pick the right strength for the taste-match term independent of the simplex constraint.
+
+**Model:**
 ```python
-def extended_model(X, listens, K=6):
-    # ... song-level priors as in Phase 1 ...
+def extended_model(user_idx, song_idx, mood_idx, listened, U, S, K):
+    # Learnable global parameters
+    base_logit  = pyro.param("base_logit",  torch.tensor(-1.6))       # σ⁻¹(0.166) ≈ base rate
+    taste_scale = pyro.param("taste_scale", torch.tensor(5.0),
+                             constraint=dist.constraints.positive)
 
-    U = listens["user_id"].nunique()
     with pyro.plate("users", U):
-        theta = pyro.sample("theta", dist.Dirichlet(torch.ones(K) * 0.5))
+        theta   = pyro.sample("theta",   dist.Dirichlet(0.5 * torch.ones(K)))
+        alpha_u = pyro.sample("alpha_u", dist.Normal(0.0, 1.0))
 
-    # ... song-level z and x_s sampling as in Phase 1 ...
+    with pyro.plate("songs", S):
+        gamma_s = pyro.sample("gamma_s", dist.Normal(0.0, 1.0))
 
-    # listen events
-    with pyro.plate("listens", len(listens)):
-        # listen probability for (u_i, s_i) pair
-        u_idx = listens["user_idx"].values
-        s_idx = listens["song_idx"].values
-        # one-hot mood indicator e_{z_s}
-        z_per_listen = z[s_idx]
-        score = theta[u_idx, z_per_listen]
-        pyro.sample("l", dist.Bernoulli(score), obs=listens["listened"].values)
+    with pyro.plate("listens", len(listened)):
+        taste_match = taste_scale * theta[user_idx, mood_idx]
+        logit = base_logit + taste_match + alpha_u[user_idx] + gamma_s[song_idx]
+        pyro.sample("obs", dist.Bernoulli(torch.sigmoid(logit)), obs=listened)
 ```
 
-**Inference:** SVI again, with the larger latent space ($\theta_u$ for every user).
+**Guide:** custom mean-field — Dirichlet `alpha_q` (positive-constrained) for $\theta_u$, Normal `(loc_u, scale_u)` for $\alpha_u$, Normal `(loc_s, scale_s)` for $\gamma_s$. `mood_idx` carries the Phase 1 MAP $z_s$ per listen event; no discrete latent remains, so `Trace_ELBO` is sufficient (no enumeration).
 
-**Deliverables:**
-- Posterior over $\theta_u$ for a few selected users — sanity-check that some users concentrate on one mood (say, electronic) while others spread across many.
-- Per-user "taste profile" bar chart for 4–6 example users.
-- Updated mood interpretation now that the user signal is in the loop.
+**Inference:** SVI with Adam (lr=$10^{-2}$), 1000 steps, seed 67.
+
+**Deliverables (in notebook):**
+- ELBO convergence plot.
+- Per-user posterior taste profile bar charts (six representative users sorted by entropy: 2 concentrated, 2 middle, 2 dispersed).
+- Population-level $U \times K$ posterior-mean heatmap.
+- Dominant-mood distribution across users.
+
+**Gate (passed):** ELBO converged (flat tail), at least some users have concentrated taste profiles below uniform entropy.
 
 ---
 
@@ -403,10 +429,10 @@ samples = predictive(X_blank)  # samples["obs"] shape: (S, N, D)
 - [x] `phase0_data.ipynb` written and run end-to-end — produces `songs_clean.csv` (with `genre` column) and `listens_clean.csv`.
 - [x] tagtraum genre annotations (`msd_tagtraum_cd2.cls`) integrated into Phase 0 via `unique_tracks.txt` TR→SO bridge (~54% coverage).
 - [x] Phase 1 — baseline GMM (`phase1_mood_model_w-genres.ipynb`).
-- [ ] Phase 2 — NUTS comparison.
-- [ ] Phase 3 — user-taste extension.
-- [ ] Phase 4 — posterior predictive checks.
-- [ ] Phase 5 — IEEE paper.
+- [x] Phase 2 — NUTS comparison (`phase2_nuts_comparison.ipynb`): R̂=1.038, min ESS 69.9, median ESS 600, 93.3% SVI/NUTS agreement.
+- [x] Phase 3 — user-taste extension (`phase3_user_taste.ipynb`): Dirichlet $\theta_u$ + $\alpha_u$, $\gamma_s$ biases + learnable global $b$, $\beta$.
+- [ ] Phase 4 — posterior predictive checks (notebook drafted, not yet executed; `data/phase4_processed/` does not exist).
+- [ ] Phase 5 — IEEE paper (Results, Discussion, Conclusion still empty; abstract/contribution table placeholder).
 - [ ] Phase 6 — notebook polish.
 
 ---
@@ -419,7 +445,9 @@ These are the non-obvious choices that future-you will want to be reminded of.
 - **Six features only.** `loudness, tempo, key, mode, time_signature, duration`. `energy` and `danceability` are all-zero in the summary file (only stored in per-track HDF5s). `key` (chromatic 0–11) and `duration` are musically meaningful substitutes. `hotttnesss` and segment pitches add noise.
 - **5:1 negative sampling.** Standard for implicit-feedback Bernoulli likelihoods. Higher ratios (10:1) overweight the negatives; lower (1:1) underweight them.
 - **Active-user filter ≥5 listens.** Below 5, the per-user $\theta_u$ posterior is dominated by the prior — we'd be reporting noise.
-- **K=6 moods with genre-stratified init.** Naive K-means at K≥3 collapses to major/minor because the binary `mode` feature dominates. Fixed by mapping 15 tagtraum genres to 6 mood groups and using per-group feature means as K-means seed centres before SVI warm-start. Do not revert to K=2 or random init.
+- **K=10 via ΔELBO elbow.** K is auto-selected by sweeping K=2..15, fitting 500 SVI steps each, and picking the elbow of the per-component ELBO gain. Genre-stratified init was considered but abandoned: genres and moods are different constructs, and the mixed-likelihood loss landscape is well-conditioned without it. Plain multi-restart K-means (`n_init=20`) on the 3 z-scored continuous features is used instead.
+- **Phase 3 listen-likelihood shape.** The model uses $\sigma(b + \beta \cdot \theta_{u, z_s} + \alpha_u + \gamma_s)$ with learnable global $b$ (init $-1.6$, matches empirical base rate) and $\beta > 0$ (init $5.0$), plus per-user $\alpha_u \sim \mathcal{N}(0,1)$ and per-song $\gamma_s \sim \mathcal{N}(0,1)$. The simpler $\sigma(\theta_u \cdot e_{z_s})$ form forces $\theta_u$ to absorb activity and popularity variance, distorting taste estimates; the bias decomposition improved ELBO from ~7.5M to ~5.6M.
+- **$z_s$ fixed at Phase 1 MAP in Phase 3.** The Phase 3 model does not re-sample $z_s$; it reads the MAP assignment from the fitted Phase 1 guide. This removes the only discrete latent in the listen submodel, so `Trace_ELBO` is sufficient (no enumeration / `infer_discrete` needed inside Phase 3).
 - **tagtraum genre annotations.** `msd_tagtraum_cd2.cls` at `../msd_tagtraum_cd2.cls`. Uses MSD track IDs (TR...) — does NOT directly join to the summary HDF5 (which uses SO... Echo Nest song IDs). Bridge via `unique_tracks.txt` (`../unique_tracks.txt`). Genre coverage ~54% (157k of 292k matched songs). Used only for K-means initialisation — not a model feature. Falls back to n_init=20 multi-restart K-means if coverage drops below 30%.
 - **MinMax scaling, not z-score.** `mode` and `time_signature` are categorical-ish; z-scoring would distort them. MinMax to $[0,1]$ keeps them on the same scale as the continuous features without changing their shape.
 - **`TraceEnum_ELBO` for SVI, `infer_discrete` + NUTS for MCMC.** These are the canonical Pyro patterns the course uses for mixtures with discrete latents. Discrete latents have no gradients, so SVI must enumerate them and NUTS must marginalise them.
